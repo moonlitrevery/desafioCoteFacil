@@ -87,11 +87,3 @@ Se a estrutura HTML do site (formulário de login ou tabela de produtos) for dif
         ├── __init__.py
         └── products_spider.py   # Spider de login + listagem de produtos
 ```
-
-## Credenciais (ambiente de teste)
-
-- **Site**: https://pedidoeletronico.servimed.com.br/
-- **Usuário**: juliano@farmaprevonline.com.br
-- **Senha**: a007299A
-
-*(Não commitar credenciais reais no repositório.)*
