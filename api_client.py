@@ -1,26 +1,35 @@
 """
-Cliente da API do desafio Cotefácil (Nível 2).
-Autenticação OAuth e envio de produtos para /produto.
+Cliente da API do desafio Cotefácil (Nível 2 e 3).
+Autenticação OAuth, envio de produtos (/produto) e pedidos (/pedido).
 """
+import logging
 import os
 import requests
+
+logger = logging.getLogger(__name__)
 
 
 def get_base_url():
     """URL base da API (variável de ambiente DESAFIO_API_URL)."""
-    url = os.environ.get("DESAFIO_API_URL", "https://api.desafio.cotefacil.com.br").rstrip("/")
+    url = os.environ.get(
+        "DESAFIO_API_URL",
+        "https://desafio.cotefacil.net",
+    ).rstrip("/")
     return url
 
 
 def signup(email: str, password: str, base_url: str | None = None) -> dict:
     """
     Cria um usuário na API (POST /oauth/signup).
+    Aceita email ou username (API OpenAPI usa username; algumas implantações aceitam email).
     Retorna o JSON da resposta. Faça isso uma vez antes de usar o worker.
     """
     base_url = base_url or get_base_url()
+    # OpenAPI: CreateUser requer username (3-50 chars) e password (8-64 chars)
+    payload = {"username": email, "password": password}
     r = requests.post(
         f"{base_url}/oauth/signup",
-        json={"email": email, "password": password},
+        json=payload,
         headers={"Content-Type": "application/json"},
         timeout=30,
     )
@@ -100,3 +109,54 @@ def _to_number(val, default):
         return float(s) if "." in s else int(s)
     except ValueError:
         return default
+
+
+# ---------- Nível 3: Pedidos ----------
+
+
+def post_pedido(token: str, base_url: str | None = None) -> dict:
+    """
+    Cria um pedido aleatório na API (POST /pedido).
+    Requer autenticação (Bearer token).
+    Retorna o Pedido criado (id, codigo_fornecedor, status, itens).
+    """
+    base_url = base_url or get_base_url()
+    r = requests.post(
+        f"{base_url}/pedido",
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {token}",
+        },
+        timeout=30,
+    )
+    r.raise_for_status()
+    return r.json()
+
+
+def patch_pedido(
+    id_pedido: int,
+    codigo_confirmacao: str,
+    status: str,
+    token: str,
+    base_url: str | None = None,
+) -> dict | None:
+    """
+    Atualiza o pedido com código de confirmação e status (PATCH /pedido/:id).
+    Payload: {"codigo_confirmacao": "...", "status": "..."}.
+    Retorna o JSON da resposta (Pedido ou null).
+    """
+    base_url = base_url or get_base_url()
+    r = requests.patch(
+        f"{base_url}/pedido/{id_pedido}",
+        json={
+            "codigo_confirmacao": codigo_confirmacao,
+            "status": status,
+        },
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {token}",
+        },
+        timeout=30,
+    )
+    r.raise_for_status()
+    return r.json()

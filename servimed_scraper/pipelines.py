@@ -1,3 +1,23 @@
+class CollectOrderResultPipeline:
+    """
+    Pipeline que armazena o resultado do pedido (codigo_confirmacao, status)
+    em uma lista passada via settings['ORDER_RESULT_CONTAINER'].
+    Usado pelo order_runner (Nível 3).
+    """
+    def __init__(self, result_container):
+        self.result_container = result_container
+
+    @classmethod
+    def from_crawler(cls, crawler):
+        return cls(
+            result_container=crawler.settings.get("ORDER_RESULT_CONTAINER", []),
+        )
+
+    def process_item(self, item, spider):
+        if hasattr(item, "get") and item.get("codigo_confirmacao") and item.get("status"):
+            self.result_container.append(dict(item))
+        return item
+
 
 class CollectItemsPipeline:
     """

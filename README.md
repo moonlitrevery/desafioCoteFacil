@@ -176,27 +176,157 @@ python enqueue_example.py --redis-url "$REDIS_URL" --queue "$RQ_QUEUE_NAME"
 
 ---
 
+## Nível 3 – Avançado (Pedido)
+
+### Objetivo
+
+- Gerar um pedido aleatório pela API do desafio (POST /pedido, com autenticação).
+- Enfileirar tarefa com payload: `usuario`, `senha`, `id_pedido`, `produtos`.
+- Worker: realizar o pedido via formulário no site (Servimed) e enviar código de confirmação e status para a API (PATCH /pedido/:id).
+
+### Requisitos atendidos
+
+- **Signup**: criar usuário em /oauth/signup (username/password).
+- **Autenticação**: /oauth/token para obter token antes de POST /pedido e PATCH /pedido/:id.
+- **Pedido aleatório**: POST /pedido (retorna pedido com id e itens).
+- **Fila de pedidos**: tarefas com `{"usuario", "senha", "id_pedido", "produtos": [{"gtin", "codigo", "quantidade"}]}`.
+- **Worker de pedido**: `process_pedido_task` — executa pedido no site (order spider) e faz PATCH /pedido/:id com `{"codigo_confirmacao", "status"}`.
+
+### Como executar (Nível 3)
+
+#### 1. Criar usuário na API (uma vez)
+
+```bash
+python -c "
+from api_client import signup
+signup('seu_usuario', 'sua_senha_min_8_chars')
+print('Usuário criado. Use DESAFIO_API_USER e DESAFIO_API_PASSWORD.')
+"
+```
+
+#### 2. Variáveis de ambiente
+
+```bash
+export DESAFIO_API_URL="https://desafio.cotefacil.net"
+export DESAFIO_API_USER="seu_usuario"
+export DESAFIO_API_PASSWORD="sua_senha"
+export SERVIMED_USER="juliano@farmaprevonline.com.br"
+export SERVIMED_PASSWORD="a007299A"
+# Opcional: copie .env.example para .env e ajuste
+```
+
+#### 3. Iniciar o worker (filas scraping e pedido)
+
+```bash
+python run_worker.py
+# ou só fila pedido: python run_worker.py --queues pedido
+```
+
+#### 4. Gerar pedido aleatório e enfileirar
+
+Em outro terminal:
+
+```bash
+python enqueue_pedido.py
+```
+
+Isso irá: obter token → POST /pedido (pedido aleatório) → enfileirar tarefa com usuario/senha do fornecedor e itens do pedido. O worker fará login no site, simulará o pedido e enviará PATCH /pedido/:id com `codigo_confirmacao` e `status: pedido_realizado`.
+
+#### 5. Simulação de ambiente
+
+- O spider de pedido (`order`) faz login no site real; se não encontrar formulário de pedido, retorna código simulado `SERV-{id_pedido}` para integrar com a API.
+- Para testes locais sem o site Servimed, use o servidor mock (ver seção **Testes** e **Simulação com API mock**) ou variável `SERVIMED_MOCK=1` em testes.
+
+### Entregáveis Nível 3
+
+| Entregável | Descrição |
+|------------|-----------|
+| **Lógica de pedido** | `order_runner.py`, spider `order` em `servimed_scraper/spiders/order_spider.py`, job `worker.process_pedido_task`. |
+| **API** | `post_pedido()`, `patch_pedido()` em `api_client.py`; signup com username. |
+| **Fila** | Fila `pedido`; `enqueue_pedido.py` gera pedido na API e enfileira. |
+| **Simulação** | Spider simula envio de formulário; código de confirmação extraído da página ou simulado. |
+| **Testes** | pytest em `tests/` (api_client, worker, order_runner, mock server). |
+
+### Visão técnica Nível 3
+
+- **POST /pedido**: gera pedido aleatório (API retorna id e itens). Autenticação Bearer.
+- **Payload da tarefa**: `usuario`, `senha`, `id_pedido`, `produtos` (lista com gtin, codigo, quantidade).
+- **Worker**: `process_pedido_task` → `order_runner.run_order()` (spider `order`: login + formulário de pedido) → obtém `codigo_confirmacao` e `status` → `patch_pedido(id, codigo_confirmacao, status, token)`.
+- **Callback**: PATCH /pedido/:id com JSON `{"codigo_confirmacao": "ABC987", "status": "pedido_realizado"}`.
+
+---
+
+## Testes automatizados
+
+Requer: `pip install -r requirements-dev.txt` (ou `pytest responses`).
+
+```bash
+# Na raiz do projeto
+pytest
+# Com cobertura
+pytest --cov=. --cov-report=term-missing
+```
+
+Testes: `tests/test_api_client.py` (signup, token, produto, pedido), `tests/test_worker.py` (validação de payload e fluxo mockado), `tests/test_order_runner.py` (run_order).
+
+---
+
+## Simulação com API mock (ambiente local)
+
+Para testar o fluxo de pedido sem a API real do desafio:
+
+```bash
+pip install fastapi uvicorn
+uvicorn tests_mock_server.app:app --reload --port 8799
+```
+
+Em outro terminal:
+
+```bash
+export DESAFIO_API_URL=http://127.0.0.1:8799
+python -c "from api_client import signup; signup('testuser', 'password123'); print('OK')"
+export DESAFIO_API_USER=testuser
+export DESAFIO_API_PASSWORD=password123
+python enqueue_pedido.py
+```
+
+O worker (com Redis e `python run_worker.py`) processará a fila e fará PATCH no mock.
+
+---
+
 
 ## Estrutura do repositório
 
 ```
 .
 ├── scrapy.cfg
+├── pyproject.toml
+├── .env.example
 ├── run_scraper.py            # Nível 1: execução com parâmetros de login
-├── run_worker.py             # Nível 2: inicia o worker RQ
-├── enqueue_example.py        # Nível 2: exemplo de chamada à fila
-├── worker.py                 # Nível 2: job process_scraping_task
-├── api_client.py             # Nível 2: signup, oauth/token, POST /produto
-├── scraper_runner.py         # Nível 2: executa spider e retorna lista em memória
+├── run_worker.py             # Nível 2/3: worker RQ (filas scraping e pedido)
+├── enqueue_example.py        # Nível 2: enfileira tarefa de scraping
+├── enqueue_pedido.py         # Nível 3: gera pedido na API e enfileira tarefa de pedido
+├── worker.py                 # process_scraping_task, process_pedido_task
+├── api_client.py             # signup, oauth/token, POST /produto, POST/PATCH /pedido
+├── scraper_runner.py         # executa spider de produtos
+├── order_runner.py           # Nível 3: executa spider de pedido
 ├── requirements.txt
 ├── README.md
+├── tests/                    # Testes automatizados (pytest)
+│   ├── conftest.py
+│   ├── test_api_client.py
+│   ├── test_worker.py
+│   └── test_order_runner.py
+├── tests_mock_server/        # API mock local (uvicorn tests_mock_server.app:app)
+│   └── app.py
 └── servimed_scraper/
     ├── __init__.py
     ├── settings.py
     ├── items.py
     ├── middlewares.py
-    ├── pipelines.py           # Inclui CollectItemsPipeline para o worker
+    ├── pipelines.py           # CollectItemsPipeline, CollectOrderResultPipeline
     └── spiders/
         ├── __init__.py
-        └── products_spider.py   # Spider de login + listagem de produtos
+        ├── products_spider.py
+        └── order_spider.py    # Nível 3: pedido no site
 ```

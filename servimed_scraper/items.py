@@ -9,3 +9,9 @@ class ProductItem(scrapy.Item):
     descricao = scrapy.Field()  # Descrição
     preco_fabrica = scrapy.Field()  # Preço de fábrica
     estoque = scrapy.Field()    # Estoque
+
+
+class OrderResultItem(scrapy.Item):
+    """Resultado do pedido no site (Nível 3): código Servimed e status."""
+    codigo_confirmacao = scrapy.Field()
+    status = scrapy.Field()
