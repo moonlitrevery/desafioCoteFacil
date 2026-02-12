@@ -69,20 +69,133 @@ O arquivo `produtos.json` (ou o nome informado em `-o`) será gerado na raiz do 
 
 Se a estrutura HTML do site (formulário de login ou tabela de produtos) for diferente do esperado, pode ser necessário ajustar os seletores em `products_spider.py` (por exemplo, XPath/CSS da tabela ou dos campos do formulário) após inspecionar a página no navegador.
 
+
+---
+
+## Nível 2 – Intermediário (fila + API)
+
+### Objetivo
+
+- Processo assíncrono que recebe tarefas de scraping via **fila** (RQ + Redis).
+- Executa o scraping de forma independente para cada solicitação.
+- Envia os produtos extraídos para a **API do desafio** (autenticação OAuth e POST /produto).
+
+### Requisitos atendidos
+
+- **Fila**: RQ (Redis Queue) com Redis.
+- **Payload da tarefa**: `{"usuario": "fornecedor_user", "senha": "fornecedor_pass"}`.
+- **Worker**: processa a tarefa, faz o scraping e envia o JSON de produtos para POST /produto (após obter token em /oauth/token).
+- **API**: signup em /oauth/signup; autenticação em /oauth/token; envio em POST /produto.
+
+### Como testar localmente (Nível 2)
+
+#### 1. Dependências e Redis
+
+```bash
+pip install -r requirements.txt
+```
+
+É necessário ter **Redis** em execução (para a fila). Exemplos:
+
+- **Linux (Arch/Debian)**: `sudo systemctl start redis` ou `redis-server`
+- **Docker**: `docker run -d -p 6379:6379 redis:alpine`
+- **macOS**: `brew services start redis`
+
+#### 2. Variáveis de ambiente da API
+
+Para o worker enviar os dados à API, configure:
+
+```bash
+export DESAFIO_API_URL="https://api.desafio.cotefacil.com.br"   # URL base da API
+export DESAFIO_API_USER="seu_usuario"                             # usuário criado no signup
+export DESAFIO_API_PASSWORD="sua_senha"                           # senha do usuário
+```
+
+#### 3. Criar usuário na API (uma vez)
+Antes de rodar o worker, crie um usuário na API (POST /oauth/signup):
+
+```bash
+python -c "
+from api_client import signup
+signup('seu_email@exemplo.com', 'sua_senha')
+print('Usuário criado. Use DESAFIO_API_USER e DESAFIO_API_PASSWORD com esse email/senha.')
+"
+```
+
+Use o mesmo email/senha em `DESAFIO_API_USER` e `DESAFIO_API_PASSWORD`.
+
+#### 4. Iniciar o worker
+
+Na **raiz do projeto** (para os imports encontrarem `worker`, `api_client`, `scraper_runner`):
+
+```bash
+# Opção A: script do projeto
+python run_worker.py
+
+# Opção B: comando RQ (também na raiz do projeto)
+rq worker scraping
+```
+
+O worker ficará ouvindo a fila `scraping` (ou o nome em `RQ_QUEUE_NAME`). Deixe este terminal aberto.
+
+#### 5. Enfileirar uma tarefa (exemplo de chamada à fila)
+
+Em **outro terminal**, na raiz do projeto:
+
+```bash
+# Usando credenciais de teste do fornecedor (Servimed)
+python enqueue_example.py
+
+# Ou informando usuario e senha
+python enqueue_example.py --usuario "juliano@farmaprevonline.com.br" --senha "a007299A"
+```
+
+O worker processará a tarefa: fará o scraping com o usuario/senha informados e enviará os produtos para a API (usando `DESAFIO_API_USER` / `DESAFIO_API_PASSWORD` para obter o token).
+#### 6. Redis em outro host ou fila com outro nome
+
+```bash
+export REDIS_URL="redis://localhost:6379/0"
+export RQ_QUEUE_NAME="scraping"
+python run_worker.py
+python enqueue_example.py --redis-url "$REDIS_URL" --queue "$RQ_QUEUE_NAME"
+```
+
+### Entregáveis Nível 2
+
+| Entregável | Descrição |
+|------------|-----------|
+| **Worker + fila** | `worker.py` (job `process_scraping_task`), fila RQ com Redis; `run_worker.py` para subir o worker. |
+| **Exemplo de chamada à fila** | `enqueue_example.py` — enfileira uma tarefa com `{"usuario": "...", "senha": "..."}`. |
+| **Documentação** | Esta seção do README: como testar localmente (Redis, env, signup, worker, enqueue). |
+
+### Visão técnica Nível 2
+
+- **Fila**: RQ com Redis; fila padrão `scraping`. O job é `worker.process_scraping_task(payload)`.
+- **Scraper em memória**: `scraper_runner.run_scraper(usuario, senha)` usa o mesmo spider do Nível 1 e o pipeline `CollectItemsPipeline` para acumular itens em uma lista (sem escrever JSON em disco).
+- **API**: `api_client.py` — `signup()`, `get_token()`, `post_produtos()`. Token obtido com `DESAFIO_API_USER`/`DESAFIO_API_PASSWORD`; produtos enviados em POST /produto no formato exigido (gtin, codigo, descricao, preco_fabrica numérico, estoque numérico).
+
+---
+
+
 ## Estrutura do repositório
 
 ```
 .
 ├── scrapy.cfg
-├── run_scraper.py          # Script de execução com parâmetros de login
+├── run_scraper.py            # Nível 1: execução com parâmetros de login
+├── run_worker.py             # Nível 2: inicia o worker RQ
+├── enqueue_example.py        # Nível 2: exemplo de chamada à fila
+├── worker.py                 # Nível 2: job process_scraping_task
+├── api_client.py             # Nível 2: signup, oauth/token, POST /produto
+├── scraper_runner.py         # Nível 2: executa spider e retorna lista em memória
 ├── requirements.txt
 ├── README.md
 └── servimed_scraper/
     ├── __init__.py
     ├── settings.py
-    ├── items.py            # ProductItem (gtin, codigo, descricao, preco_fabrica, estoque)
+    ├── items.py
     ├── middlewares.py
-    ├── pipelines.py
+    ├── pipelines.py           # Inclui CollectItemsPipeline para o worker
     └── spiders/
         ├── __init__.py
         └── products_spider.py   # Spider de login + listagem de produtos
