@@ -198,5 +198,5 @@ python enqueue_example.py --redis-url "$REDIS_URL" --queue "$RQ_QUEUE_NAME"
     ├── pipelines.py           # Inclui CollectItemsPipeline para o worker
     └── spiders/
         ├── __init__.py
-        └── products_spider.py
+        └── products_spider.py   # Spider de login + listagem de produtos
 ```
